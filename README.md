@@ -1,5 +1,10 @@
 # solix2mqtt
 
+Personal fork – no support provided.
+Added forecast values for smart mode with Solix3.
+
+See original: https://github.com/tomquist/solix2mqtt
+
 CLI tool to poll data for an Anker SOLIX Solarbank E1600 Balcony Power Storage and publish it to an MQTT broker.
 
 ## Description
