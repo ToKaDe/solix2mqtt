@@ -70,29 +70,51 @@ async function run(): Promise<void> {
 
         // Fetch PV forecast – only works when AI/Smart Mode is active on the Solix 3.
         // Poll at most once per hour to avoid unnecessary API load.
+        // Note: device_sn must be empty string to get site-level forecast data.
         const now = new Date();
         if (shouldPollForecast(site.site_id, now)) {
-          const solarbanks = scenInfo.data?.solarbank_info?.solarbank_list ?? [];
-          // Use first solarbank's serial; empty string also works per API convention
-          const deviceSn = solarbanks[0]?.device_sn ?? "";
           try {
             logger.log(`Fetching PV forecast for site ${site.site_name}`);
-            const forecastResponse = await loggedInApi.energyAnalysis({
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+
+            // Today: actual production so far + forecast rest of day
+            const forecastToday = await loggedInApi.energyAnalysis({
               siteId: site.site_id,
-              deviceSn,
+              deviceSn: "",
               type: "day",
               deviceType: "solar_production",
+              startTime: today,
             });
-            const data = forecastResponse.data;
-            if (data?.forecast_trend && data.forecast_trend.length > 0) {
+            // Tomorrow: full 24h forecast (required when current hour > 0)
+            const forecastTomorrow = await loggedInApi.energyAnalysis({
+              siteId: site.site_id,
+              deviceSn: "",
+              type: "day",
+              deviceType: "solar_production",
+              startTime: tomorrow,
+            });
+
+            const todayData = forecastToday.data;
+            const tomorrowData = forecastTomorrow.data;
+
+            // Combine forecast trend from today and tomorrow
+            const combinedTrend = [
+              ...(todayData?.forecast_trend ?? []),
+              ...(tomorrowData?.forecast_trend ?? []),
+            ];
+
+            if (todayData?.solar_total !== undefined) {
               lastForecastPoll[site.site_id] = now;
               topic = `${config.mqttTopic}/site/${site.site_name}/forecast`;
               await publisher.publish(topic, {
-                forecast_total: data.forecast_total ?? "",
-                forecast_trend: data.forecast_trend,
-                solar_total: data.solar_total ?? "",
-                trend_unit: data.trend_unit ?? "",
-                local_time: data.local_time ?? "",
+                forecast_total: todayData.forecast_total ?? "",
+                forecast_total_tomorrow: tomorrowData?.forecast_total ?? "",
+                forecast_trend: combinedTrend,
+                solar_total: todayData.solar_total ?? "",
+                trend_unit: todayData.trend_unit ?? "",
+                local_time: todayData.local_time ?? "",
               });
               logger.log(`PV forecast published for site ${site.site_name}`);
             } else {
