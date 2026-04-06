@@ -12,6 +12,18 @@ function isLoginValid(loginData: LoginResultResponse, now: Date = new Date()) {
   return new Date(loginData.token_expires_at * 1000).getTime() > now.getTime();
 }
 
+// Track last forecast poll per site to avoid polling more than once per hour
+const lastForecastPoll: Record<string, Date> = {};
+
+function shouldPollForecast(siteId: string, now: Date = new Date()): boolean {
+  const last = lastForecastPoll[siteId];
+  if (!last) return true;
+  return last.getFullYear() !== now.getFullYear()
+    || last.getMonth() !== now.getMonth()
+    || last.getDate() !== now.getDate()
+    || last.getHours() !== now.getHours();
+}
+
 async function run(): Promise<void> {
   logger.log(JSON.stringify(anonymizeConfig(config)));
   const api = new SolixApi({
@@ -55,6 +67,43 @@ async function run(): Promise<void> {
         const scenInfo = await loggedInApi.scenInfo(site.site_id);
         topic = `${config.mqttTopic}/site/${site.site_name}/scenInfo`;
         await publisher.publish(topic, scenInfo.data);
+
+        // Fetch PV forecast – only works when AI/Smart Mode is active on the Solix 3.
+        // Poll at most once per hour to avoid unnecessary API load.
+        const now = new Date();
+        if (shouldPollForecast(site.site_id, now)) {
+          const solarbanks = scenInfo.data?.solarbank_info?.solarbank_list ?? [];
+          // Use first solarbank's serial; empty string also works per API convention
+          const deviceSn = solarbanks[0]?.device_sn ?? "";
+          try {
+            logger.log(`Fetching PV forecast for site ${site.site_name}`);
+            const forecastResponse = await loggedInApi.energyAnalysis({
+              siteId: site.site_id,
+              deviceSn,
+              type: "day",
+              deviceType: "solar_production",
+            });
+            const data = forecastResponse.data;
+            if (data?.forecast_trend && data.forecast_trend.length > 0) {
+              lastForecastPoll[site.site_id] = now;
+              topic = `${config.mqttTopic}/site/${site.site_name}/forecast`;
+              await publisher.publish(topic, {
+                forecast_total: data.forecast_total ?? "",
+                forecast_trend: data.forecast_trend,
+                solar_total: data.solar_total ?? "",
+                trend_unit: data.trend_unit ?? "",
+                local_time: data.local_time ?? "",
+              });
+              logger.log(`PV forecast published for site ${site.site_name}`);
+            } else {
+              logger.log(`No PV forecast data available for site ${site.site_name} – AI/Smart Mode may not be active`);
+            }
+          } catch (e) {
+            logger.warn(`Failed to fetch PV forecast for site ${site.site_name}`, e);
+          }
+        } else {
+          logger.log(`Skipping PV forecast for site ${site.site_name} – already polled this hour`);
+        }
       }
       logger.log("Published.");
     } else {

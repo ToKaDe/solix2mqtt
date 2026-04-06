@@ -224,6 +224,12 @@ export interface ScenInfo {
   power_site_type: number,
 }
 
+export interface ForecastSlot {
+  time: string;
+  value: string;
+  rods: null;
+}
+
 export interface EnergyAnalysis {
   power: Array<{
     time:`${number}:${number}`,
@@ -243,7 +249,13 @@ export interface EnergyAnalysis {
     type: `${number}`,
     total: `${number}`,
     unit:string
-  }>
+  }>,
+  // PV forecast fields – only present when AI/Smart Mode is active
+  forecast_trend?: ForecastSlot[],
+  forecast_total?: string,
+  solar_total?: string,
+  trend_unit?: string,
+  local_time?: string,
 }
 
 export interface LoadData {
@@ -414,8 +426,9 @@ export class SolixApi {
         endTime?: Date,
         deviceType?: "solar_production"
       }) => {
-        const startTimeString = `${startTime.getUTCFullYear()}-${this.pad(startTime.getUTCMonth())}-${this.pad(startTime.getUTCDate())}`;
-        const endTimeString = endTime != null ? `${endTime.getUTCFullYear()}-${endTime.getUTCMonth()}-${endTime.getUTCDate()}` : "";
+        // Fix: getUTCMonth() is 0-indexed, so +1 is required
+        const startTimeString = `${startTime.getUTCFullYear()}-${this.pad(startTime.getUTCMonth() + 1)}-${this.pad(startTime.getUTCDate())}`;
+        const endTimeString = endTime != null ? `${endTime.getUTCFullYear()}-${this.pad(endTime.getUTCMonth() + 1)}-${this.pad(endTime.getUTCDate())}` : "";
         const data = {
           site_id: siteId,
           device_sn:deviceSn,
